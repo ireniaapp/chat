@@ -23,7 +23,7 @@ const settingsClose = document.getElementById('settings-close');
 const settingTextOnly = document.getElementById('setting-text-only');
 const settingAutoListen = document.getElementById('setting-auto-listen');
 
-const AGENT_ID = 'agent_0501kk824pheffhtf28ehae8ddqs';
+const AGENT_ID = 'agent_9601kcrjbe74f08bhzgewfa2fcxw';
 const CHAT_STORAGE_KEY = 'irenia_chat_memory_v1';
 const SETTINGS_STORAGE_KEY = 'irenia_chat_settings_v1';
 
