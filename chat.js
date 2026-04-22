@@ -49,6 +49,7 @@ let voiceInteractionLocked = false;
 let wasSpeaking = false;
 let currentSessionTextOnly = false;
 let lastConnectionError = '';
+let currentMode = 'idle';
 
 function isMicrophonePermissionError(error) {
     const message = `${error?.name || ''} ${error?.message || ''}`.toLowerCase();
@@ -463,9 +464,12 @@ async function endCurrentSession() {
 }
 
 function onModeChange(mode) {
+    currentMode = mode || 'idle';
+
     if (mode === 'speaking') {
         wasSpeaking = true;
-        setVoiceInteractionLocked(true);
+        // Keep the mic button available so the user can interrupt and speak.
+        setVoiceInteractionLocked(false);
         setStatus('Hablando...');
         setOrbListening(false);
         return;
@@ -797,7 +801,7 @@ textInput.addEventListener('input', () => {
 });
 
 voiceBtn.addEventListener('click', async () => {
-    if (settings.textOnly || voiceInteractionLocked || voiceToggleInFlight) return;
+    if (settings.textOnly || voiceToggleInFlight) return;
 
     voiceToggleInFlight = true;
     refreshVoiceButtonState();
@@ -806,12 +810,22 @@ voiceBtn.addEventListener('click', async () => {
         const session = await ensureSession();
         if (!session) return;
 
-        // One tap = one audio turn. Ignore extra taps until the turn completes.
-        if (!micMuted) return;
+        if (currentMode === 'speaking') {
+            try {
+                session.interrupt();
+            } catch (error) {
+                console.log('No se pudo interrumpir al asistente:', error);
+            }
+        }
+
+        // Ensure user gets the turn when pressing mic.
+        if (!micMuted) {
+            session.setMicMuted(true);
+        }
 
         micMuted = false;
         session.setMicMuted(false);
-        setVoiceInteractionLocked(true);
+        setVoiceInteractionLocked(false);
         onModeChange('listening');
     } catch (error) {
         console.error(error);
