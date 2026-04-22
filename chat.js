@@ -473,14 +473,27 @@ function onModeChange(mode) {
             if (conversationSession && conversationSession.isOpen()) {
                 try {
                     conversationSession.interrupt();
-                    conversationSession.setMicMuted(true);
-                    micMuted = true;
+
+                    // If user explicitly requested a turn, keep mic open for user speech.
+                    if (awaitingUserUtterance) {
+                        conversationSession.setMicMuted(false);
+                        micMuted = false;
+                    } else {
+                        conversationSession.setMicMuted(true);
+                        micMuted = true;
+                    }
                 } catch (error) {
                     console.log('No se pudo bloquear respuesta temprana:', error);
                 }
             }
-            setStatus('Presiona microfono y habla');
-            setOrbListening(false);
+
+            if (awaitingUserUtterance) {
+                setStatus('Escuchando...');
+                setOrbListening(true);
+            } else {
+                setStatus('Presiona microfono y habla');
+                setOrbListening(false);
+            }
             return;
         }
 
@@ -805,6 +818,8 @@ chatForm.addEventListener('submit', async (event) => {
     textInput.value = '';
 
     try {
+        // Keep text flow deterministic, independent from any current voice turn.
+        await endCurrentSession();
         const session = await ensureSession({ forceTextOnly: true });
         if (!session) return;
         session.sendUserMessage(text);
