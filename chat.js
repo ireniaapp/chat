@@ -22,10 +22,13 @@ const settingsToggle = document.getElementById('settings-toggle');
 const settingsClose = document.getElementById('settings-close');
 const settingTextOnly = document.getElementById('setting-text-only');
 const settingAutoListen = document.getElementById('setting-auto-listen');
+const tokenStatus = document.getElementById('token-status');
 
 const AGENT_ID = 'agent_7201kpv8tk7nfm1b2p57jwd1ak18';
 const CHAT_STORAGE_KEY = 'irenia_chat_memory_v1';
 const SETTINGS_STORAGE_KEY = 'irenia_chat_settings_v1';
+const TOKEN_COST_PER_TURN = 1;
+const LOW_TOKEN_WARNING_THRESHOLD = 5;
 
 const defaultSettings = {
     textOnly: false,
@@ -52,6 +55,7 @@ let lastConnectionError = '';
 let currentMode = 'idle';
 let hasUserSpokenInVoiceSession = false;
 let awaitingUserUtterance = false;
+let tokenBalance = null;
 
 function isMicrophonePermissionError(error) {
     const message = `${error?.name || ''} ${error?.message || ''}`.toLowerCase();
@@ -112,6 +116,83 @@ function formatDateLabel(timestamp) {
 
 function setStatus(text) {
     statusText.innerText = text;
+}
+
+function setTokenBalance(balance) {
+    tokenBalance = Number.isFinite(balance) ? balance : null;
+}
+
+function hasEnoughTokens() {
+    if (tokenBalance === null) return true;
+    return tokenBalance >= TOKEN_COST_PER_TURN;
+}
+
+function updateTokenStatus() {
+    if (!tokenStatus) return;
+
+    tokenStatus.classList.remove('hidden', 'text-slate-300', 'text-amber-300', 'text-red-300', 'border-slate-700', 'border-amber-400/30', 'border-red-500/30', 'bg-slate-900/70', 'bg-amber-500/10', 'bg-red-500/10');
+
+    if (tokenBalance === null) {
+        tokenStatus.classList.add('hidden');
+        tokenStatus.innerText = '';
+        return;
+    }
+
+    if (tokenBalance <= 0) {
+        tokenStatus.classList.add('text-red-300', 'border-red-500/30', 'bg-red-500/10');
+        tokenStatus.innerText = 'Sin tokens disponibles';
+        return;
+    }
+
+    if (tokenBalance <= LOW_TOKEN_WARNING_THRESHOLD) {
+        tokenStatus.classList.add('text-amber-300', 'border-amber-400/30', 'bg-amber-500/10');
+        tokenStatus.innerText = `Atencion: te quedan ${tokenBalance} tokens`;
+        return;
+    }
+
+    tokenStatus.classList.add('text-slate-300', 'border-slate-700', 'bg-slate-900/70');
+    tokenStatus.innerText = `Tokens: ${tokenBalance}`;
+}
+
+async function refreshTokenBalance() {
+    if (!window.currentUser || typeof ensureUserCredits !== 'function') return null;
+
+    const balance = await ensureUserCredits({ initialize: true });
+    if (balance === null || balance === undefined) {
+        tokenBalance = null;
+        updateTokenStatus();
+        return null;
+    }
+
+    setTokenBalance(balance);
+    updateTokenStatus();
+    return tokenBalance;
+}
+
+async function consumeTurnTokens() {
+    if (!window.currentUser) return true;
+
+    if (tokenBalance !== null && tokenBalance < TOKEN_COST_PER_TURN) {
+        return false;
+    }
+
+    if (typeof _supabase === 'undefined') return false;
+
+    const { error } = await _supabase.rpc('consume_credits', {
+        p_amount: TOKEN_COST_PER_TURN
+    });
+
+    if (error) {
+        console.error('No se pudo descontar tokens:', error);
+        return false;
+    }
+
+    if (tokenBalance !== null) {
+        setTokenBalance(tokenBalance - TOKEN_COST_PER_TURN);
+        updateTokenStatus();
+    }
+
+    return true;
 }
 
 function setOrbListening(active) {
@@ -563,6 +644,11 @@ async function ensureSession(options = {}) {
         createConversation();
     }
 
+    if (!hasEnoughTokens()) {
+        setStatus('Sin tokens disponibles');
+        throw new Error('No tienes tokens disponibles. Recarga tu saldo en Supabase.');
+    }
+
     const currentActive = getActiveConversation();
     if (!currentActive) return null;
 
@@ -584,12 +670,14 @@ async function ensureSession(options = {}) {
         },
         onConnect: () => {
             setStatus('Conectado');
+            updateTokenStatus();
         },
         onDisconnect: () => {
             micMuted = true;
             wasSpeaking = false;
             setVoiceInteractionLocked(false);
             setStatus('Motor listo');
+            updateTokenStatus();
             setOrbListening(false);
         },
         onError: (message) => {
@@ -694,6 +782,8 @@ async function bootstrap() {
     const { data: { session } } = await _supabase.auth.getSession();
     if (!session) return;
     window.currentUser = session.user;
+
+    await refreshTokenBalance();
 
     await loadState();
 
@@ -812,6 +902,19 @@ chatForm.addEventListener('submit', async (event) => {
     const text = textInput.value.trim();
     if (!text) return;
 
+    if (!hasEnoughTokens()) {
+        setStatus('Sin tokens disponibles');
+        appendMessage('assistant', 'No tienes tokens disponibles para seguir usando el chat.', true);
+        return;
+    }
+
+    const consumed = await consumeTurnTokens();
+    if (!consumed) {
+        setStatus('Sin tokens disponibles');
+        appendMessage('assistant', 'No pude descontar tus tokens. Revisa tu saldo en Supabase.', true);
+        return;
+    }
+
     appendMessage('user', text, true);
     userTypedCache = text;
     userTypedAt = Date.now();
@@ -858,6 +961,12 @@ textInput.addEventListener('input', () => {
 
 voiceBtn.addEventListener('click', async () => {
     if (settings.textOnly || voiceToggleInFlight) return;
+
+    if (!hasEnoughTokens()) {
+        setStatus('Sin tokens disponibles');
+        setOrbListening(false);
+        return;
+    }
 
     voiceToggleInFlight = true;
     refreshVoiceButtonState();

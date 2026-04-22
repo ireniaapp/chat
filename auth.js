@@ -2,6 +2,53 @@
 const SUPABASE_URL = 'https://ttymwhkhwwgljuguxeia.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0eW13aGtod3dnbGp1Z3V4ZWlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5NzcxMjIsImV4cCI6MjA4NzU1MzEyMn0.iLxKac2QqiVo7sGrI84bp0yAxplfPAU_qev6A7knW6k'; 
 const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const DEFAULT_TOKEN_GRANT = 100;
+
+async function ensureUserCredits(options = {}) {
+    const {
+        initialize = false,
+        startingBalance = DEFAULT_TOKEN_GRANT
+    } = options;
+
+    const { data: { user } } = await _supabase.auth.getUser();
+    if (!user) return null;
+
+    const { data, error } = await _supabase
+        .from('user_credits')
+        .select('balance')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+    if (error) {
+        console.error('No se pudo leer el saldo de tokens:', error);
+        return null;
+    }
+
+    if (data?.balance !== null && data?.balance !== undefined) {
+        return data.balance;
+    }
+
+    if (!initialize) {
+        return null;
+    }
+
+    const { data: upserted, error: upsertError } = await _supabase
+        .from('user_credits')
+        .upsert({
+            user_id: user.id,
+            balance: startingBalance,
+            updated_at: new Date().toISOString()
+        }, { onConflict: 'user_id' })
+        .select('balance')
+        .maybeSingle();
+
+    if (upsertError) {
+        console.error('No se pudo inicializar el saldo de tokens:', upsertError);
+        return null;
+    }
+
+    return upserted?.balance ?? startingBalance;
+}
 
 // --- 2. PROTECCIÓN Y CONEXIÓN CON ELEVENLABS ---
 async function initApp() {
@@ -66,6 +113,7 @@ if (logForm) {
             errorDiv.innerText = "Error: " + error.message;
             errorDiv.classList.remove('hidden');
         } else {
+            await ensureUserCredits({ initialize: true });
             window.location.replace("index.html");
         }
     });
