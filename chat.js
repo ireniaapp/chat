@@ -47,6 +47,8 @@ let userTypedAt = 0;
 let voiceToggleInFlight = false;
 let voiceInteractionLocked = false;
 let wasSpeaking = false;
+let currentSessionTextOnly = false;
+let lastConnectionError = '';
 
 function isMicrophonePermissionError(error) {
     const message = `${error?.name || ''} ${error?.message || ''}`.toLowerCase();
@@ -55,6 +57,42 @@ function isMicrophonePermissionError(error) {
         || message.includes('denied')
         || message.includes('microphone')
         || message.includes('mic');
+}
+
+function getErrorMessage(errorLike) {
+    if (typeof errorLike === 'string') return errorLike;
+    if (errorLike && typeof errorLike === 'object') {
+        if (typeof errorLike.message === 'string') return errorLike.message;
+        if (typeof errorLike.error === 'string') return errorLike.error;
+    }
+
+    try {
+        return JSON.stringify(errorLike);
+    } catch (error) {
+        return 'Error desconocido';
+    }
+}
+
+function getConnectionHint(message) {
+    const raw = (message || '').toLowerCase();
+
+    if (raw.includes('origin') || raw.includes('domain') || raw.includes('cors')) {
+        return 'Dominio no autorizado en ElevenLabs. Revisa Allowed Origins del agente.';
+    }
+
+    if (raw.includes('unauthorized') || raw.includes('forbidden') || raw.includes('401') || raw.includes('403')) {
+        return 'Acceso no autorizado al agente. Revisa si el agente es publico o requiere signed URL.';
+    }
+
+    if (raw.includes('not found') || raw.includes('invalid agent') || raw.includes('agent')) {
+        return 'Agent ID invalido o agente no disponible.';
+    }
+
+    if (raw.includes('network') || raw.includes('fetch') || raw.includes('timeout')) {
+        return 'Fallo de red al conectar con ElevenLabs.';
+    }
+
+    return 'No pude conectar con el agente. Revisa red, permisos o configuracion de ElevenLabs.';
 }
 
 function uid() {
@@ -401,6 +439,9 @@ function buildContextSummary(messages) {
 
 async function endCurrentSession() {
     if (!conversationSession || !conversationSession.isOpen()) {
+        conversationSession = null;
+        sessionConversationId = null;
+        currentSessionTextOnly = false;
         micMuted = true;
         wasSpeaking = false;
         setVoiceInteractionLocked(false);
@@ -415,6 +456,7 @@ async function endCurrentSession() {
 
     conversationSession = null;
     sessionConversationId = null;
+    currentSessionTextOnly = false;
     micMuted = true;
     wasSpeaking = false;
     setVoiceInteractionLocked(false);
@@ -478,6 +520,7 @@ function onStatusChange(status) {
 
 async function ensureSession(options = {}) {
     const { forceTextOnly = false } = options;
+    const wantsTextOnly = settings.textOnly || forceTextOnly;
     const active = getActiveConversation();
     if (!active) {
         createConversation();
@@ -486,7 +529,7 @@ async function ensureSession(options = {}) {
     const currentActive = getActiveConversation();
     if (!currentActive) return null;
 
-    if (conversationSession && conversationSession.isOpen() && sessionConversationId === currentActive.id) {
+    if (conversationSession && conversationSession.isOpen() && sessionConversationId === currentActive.id && currentSessionTextOnly === wantsTextOnly) {
         return conversationSession;
     }
 
@@ -498,7 +541,7 @@ async function ensureSession(options = {}) {
 
     conversationSession = await window.client.Conversation.startSession({
         agentId: AGENT_ID,
-        textOnly: settings.textOnly || forceTextOnly,
+        textOnly: wantsTextOnly,
         dynamicVariables: {
             user_id: window.currentUser ? window.currentUser.id : ''
         },
@@ -516,7 +559,8 @@ async function ensureSession(options = {}) {
             wasSpeaking = false;
             setVoiceInteractionLocked(false);
             setStatus('Error de conexion');
-            console.error('ElevenLabs error:', message);
+            lastConnectionError = getErrorMessage(message);
+            console.error('ElevenLabs error:', message, '| detalle:', lastConnectionError);
         },
         onStatusChange: ({ status }) => {
             onStatusChange(status);
@@ -538,8 +582,10 @@ async function ensureSession(options = {}) {
     });
 
     sessionConversationId = currentActive.id;
+    currentSessionTextOnly = wantsTextOnly;
+    lastConnectionError = '';
 
-    if (!settings.textOnly) {
+    if (!wantsTextOnly) {
         micMuted = !settings.autoListen;
         conversationSession.setMicMuted(micMuted);
     }
@@ -714,10 +760,11 @@ chatForm.addEventListener('submit', async (event) => {
     textInput.value = '';
 
     try {
-        const session = await ensureSession();
+        const session = await ensureSession({ forceTextOnly: true });
         if (!session) return;
         session.sendUserMessage(text);
     } catch (error) {
+        lastConnectionError = getErrorMessage(error);
         if (!settings.textOnly && isMicrophonePermissionError(error)) {
             settings.textOnly = true;
             saveSettings();
@@ -730,12 +777,15 @@ chatForm.addEventListener('submit', async (event) => {
                 setStatus('Modo texto activo');
                 return;
             } catch (fallbackError) {
+                lastConnectionError = getErrorMessage(fallbackError);
                 console.error(fallbackError);
             }
         }
 
         console.error(error);
-        appendMessage('assistant', 'No pude conectar con el agente. Revisa red o permisos de microfono.', true);
+        const detail = lastConnectionError || getErrorMessage(error);
+        const hint = getConnectionHint(detail);
+        appendMessage('assistant', `${hint}${detail ? ` Detalle: ${detail}` : ''}`, true);
         setStatus('Error de conexion');
     }
 });
