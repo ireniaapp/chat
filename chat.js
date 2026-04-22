@@ -218,16 +218,17 @@ function setVoiceInteractionLocked(locked) {
 
 async function saveConversation(conversation) {
     if (!window.currentUser) return;
-    try {
-        await _supabase.from('conversations').upsert({
-            id: conversation.id,
-            user_id: window.currentUser.id,
-            title: conversation.title,
-            messages: conversation.messages,
-            updated_at: new Date(conversation.updatedAt).toISOString(),
-            created_at: new Date(conversation.createdAt).toISOString()
-        });
-    } catch (error) {
+
+    const { error } = await _supabase.from('conversations').upsert({
+        id: conversation.id,
+        user_id: window.currentUser.id,
+        title: conversation.title,
+        messages: conversation.messages,
+        updated_at: new Date(conversation.updatedAt).toISOString(),
+        created_at: new Date(conversation.createdAt).toISOString()
+    });
+
+    if (error) {
         console.error('Error guardando en Supabase:', error);
     }
 }
@@ -250,24 +251,23 @@ function saveSettings() {
 
 async function loadState() {
     try {
-        const { data, error } = await _supabase
-            .from('conversations')
-            .select('*')
-            .order('updated_at', { ascending: false });
+        if (window.currentUser) {
+            const { data, error } = await _supabase
+                .from('conversations')
+                .select('*')
+                .order('updated_at', { ascending: false });
 
-        if (error) {
-            console.error('No se pudo cargar historial:', error);
-            return;
-        }
-
-        if (data) {
-            state.conversations = data.map(row => ({
-                id: row.id,
-                title: row.title,
-                messages: row.messages || [],
-                createdAt: new Date(row.created_at).getTime(),
-                updatedAt: new Date(row.updated_at).getTime()
-            }));
+            if (error) {
+                console.error('No se pudo cargar historial:', error);
+            } else if (data) {
+                state.conversations = data.map(row => ({
+                    id: row.id,
+                    title: row.title,
+                    messages: row.messages || [],
+                    createdAt: new Date(row.created_at).getTime(),
+                    updatedAt: new Date(row.updated_at).getTime()
+                }));
+            }
         }
 
         const raw = localStorage.getItem(CHAT_STORAGE_KEY);
@@ -278,7 +278,7 @@ async function loadState() {
             }
         }
     } catch (error) {
-        console.error('Error de red:', error);
+        console.error('No se pudo cargar historial:', error);
     }
 }
 
@@ -842,10 +842,13 @@ chatSearch.addEventListener('input', () => {
 });
 
 clearChatsBtn.addEventListener('click', async () => {
-    const confirmed = window.confirm('Borrar todo el historial local de chats?');
+    const confirmed = window.confirm('Borrar todo el historial de chats?');
     if (!confirmed) return;
 
     await endCurrentSession();
+    if (window.currentUser) {
+        await _supabase.from('conversations').delete().eq('user_id', window.currentUser.id);
+    }
     state.conversations = [];
     state.activeConversationId = null;
     saveState();

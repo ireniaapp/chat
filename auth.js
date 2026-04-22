@@ -2,7 +2,7 @@
 const SUPABASE_URL = 'https://ttymwhkhwwgljuguxeia.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0eW13aGtod3dnbGp1Z3V4ZWlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5NzcxMjIsImV4cCI6MjA4NzU1MzEyMn0.iLxKac2QqiVo7sGrI84bp0yAxplfPAU_qev6A7knW6k'; 
 const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-const DEFAULT_TOKEN_GRANT = 100;
+const DEFAULT_TOKEN_GRANT = 2;
 
 async function ensureUserCredits(options = {}) {
     const {
