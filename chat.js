@@ -50,6 +50,8 @@ let wasSpeaking = false;
 let currentSessionTextOnly = false;
 let lastConnectionError = '';
 let currentMode = 'idle';
+let hasUserSpokenInVoiceSession = false;
+let awaitingUserUtterance = false;
 
 function isMicrophonePermissionError(error) {
     const message = `${error?.name || ''} ${error?.message || ''}`.toLowerCase();
@@ -467,6 +469,21 @@ function onModeChange(mode) {
     currentMode = mode || 'idle';
 
     if (mode === 'speaking') {
+        if (!currentSessionTextOnly && !hasUserSpokenInVoiceSession) {
+            if (conversationSession && conversationSession.isOpen()) {
+                try {
+                    conversationSession.interrupt();
+                    conversationSession.setMicMuted(true);
+                    micMuted = true;
+                } catch (error) {
+                    console.log('No se pudo bloquear respuesta temprana:', error);
+                }
+            }
+            setStatus('Presiona microfono y habla');
+            setOrbListening(false);
+            return;
+        }
+
         wasSpeaking = true;
         // Keep the mic button available so the user can interrupt and speak.
         setVoiceInteractionLocked(false);
@@ -477,11 +494,14 @@ function onModeChange(mode) {
 
     if (mode === 'listening' && wasSpeaking) {
         wasSpeaking = false;
-        if (conversationSession && conversationSession.isOpen()) {
+        if (!currentSessionTextOnly && conversationSession && conversationSession.isOpen()) {
             try {
-                conversationSession.interrupt();
+                // Force push-to-talk behavior after each assistant reply.
+                micMuted = true;
+                awaitingUserUtterance = false;
+                conversationSession.setMicMuted(true);
             } catch (error) {
-                console.log('Interrupcion no disponible:', error);
+                console.log('No se pudo mutear microfono tras respuesta:', error);
             }
         }
         setVoiceInteractionLocked(false);
@@ -497,7 +517,7 @@ function onModeChange(mode) {
         setStatus('Escuchando...');
         setOrbListening(true);
     } else {
-        setStatus('Motor listo');
+        setStatus('Presiona microfono y habla');
         setOrbListening(false);
     }
 }
@@ -576,9 +596,27 @@ async function ensureSession(options = {}) {
             const role = source === 'user' ? 'user' : 'assistant';
 
             if (role === 'user') {
+                hasUserSpokenInVoiceSession = true;
+                awaitingUserUtterance = false;
+
                 const sameMessage = message.trim() === userTypedCache;
                 const recentLocalEcho = Date.now() - userTypedAt < 2500;
                 if (sameMessage && recentLocalEcho) return;
+            }
+
+            if (role === 'assistant' && !currentSessionTextOnly && !hasUserSpokenInVoiceSession) {
+                if (conversationSession && conversationSession.isOpen()) {
+                    try {
+                        conversationSession.interrupt();
+                        conversationSession.setMicMuted(true);
+                        micMuted = true;
+                    } catch (error) {
+                        console.log('No se pudo interrumpir mensaje temprano del asistente:', error);
+                    }
+                }
+                setStatus('Presiona microfono y habla');
+                setOrbListening(false);
+                return;
             }
 
             appendMessage(role, message, true);
@@ -587,10 +625,13 @@ async function ensureSession(options = {}) {
 
     sessionConversationId = currentActive.id;
     currentSessionTextOnly = wantsTextOnly;
+    hasUserSpokenInVoiceSession = false;
+    awaitingUserUtterance = false;
     lastConnectionError = '';
 
     if (!wantsTextOnly) {
-        micMuted = !settings.autoListen;
+        // Strict push-to-talk: voice starts muted until user explicitly presses mic.
+        micMuted = true;
         conversationSession.setMicMuted(micMuted);
     }
 
@@ -818,11 +859,19 @@ voiceBtn.addEventListener('click', async () => {
             }
         }
 
-        // Ensure user gets the turn when pressing mic.
+        // Toggle behavior: if already listening, stop and wait for next press.
         if (!micMuted) {
             session.setMicMuted(true);
+            micMuted = true;
+            awaitingUserUtterance = false;
+            setVoiceInteractionLocked(false);
+            onModeChange('listening');
+            return;
         }
 
+        // Start a fresh user turn.
+        hasUserSpokenInVoiceSession = false;
+        awaitingUserUtterance = true;
         micMuted = false;
         session.setMicMuted(false);
         setVoiceInteractionLocked(false);
