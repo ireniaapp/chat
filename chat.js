@@ -49,7 +49,10 @@ let voiceInteractionLocked = false;
 let wasSpeaking = false;
 
 function uid() {
-    return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
 }
 
 function formatDateLabel(timestamp) {
@@ -82,15 +85,28 @@ function setVoiceInteractionLocked(locked) {
     refreshVoiceButtonState();
 }
 
+async function saveConversation(conversation) {
+    if (!window.currentUser) return;
+    try {
+        await _supabase.from('conversations').upsert({
+            id: conversation.id,
+            user_id: window.currentUser.id,
+            title: conversation.title,
+            messages: conversation.messages,
+            updated_at: new Date(conversation.updatedAt).toISOString(),
+            created_at: new Date(conversation.createdAt).toISOString()
+        });
+    } catch (error) {
+        console.error('Error guardando en Supabase:', error);
+    }
+}
+
 function saveState() {
     try {
         localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({
-            conversations: state.conversations,
             activeConversationId: state.activeConversationId
         }));
-    } catch (error) {
-        console.error('No se pudo guardar el historial local:', error);
-    }
+    } catch (error) {}
 }
 
 function saveSettings() {
@@ -101,18 +117,37 @@ function saveSettings() {
     }
 }
 
-function loadState() {
+async function loadState() {
     try {
+        const { data, error } = await _supabase
+            .from('conversations')
+            .select('*')
+            .order('updated_at', { ascending: false });
+
+        if (error) {
+            console.error('No se pudo cargar historial:', error);
+            return;
+        }
+
+        if (data) {
+            state.conversations = data.map(row => ({
+                id: row.id,
+                title: row.title,
+                messages: row.messages || [],
+                createdAt: new Date(row.created_at).getTime(),
+                updatedAt: new Date(row.updated_at).getTime()
+            }));
+        }
+
         const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-        if (!raw) return;
-
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed.conversations)) return;
-
-        state.conversations = parsed.conversations;
-        state.activeConversationId = parsed.activeConversationId;
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (state.conversations.find(c => c.id === parsed.activeConversationId)) {
+                state.activeConversationId = parsed.activeConversationId;
+            }
+        }
     } catch (error) {
-        console.error('No se pudo leer historial local:', error);
+        console.error('Error de red:', error);
     }
 }
 
@@ -282,6 +317,7 @@ function appendMessage(role, text, persist = true) {
     }
 
     saveState();
+    saveConversation(active);
     renderConversations();
 }
 
@@ -298,12 +334,17 @@ function createConversation() {
     state.activeConversationId = conversation.id;
 
     saveState();
+    saveConversation(conversation);
     renderConversations();
     renderMessages();
 }
 
 function removeConversation(id) {
     state.conversations = state.conversations.filter((item) => item.id !== id);
+
+    if (window.currentUser) {
+        _supabase.from('conversations').delete().eq('id', id).then();
+    }
 
     if (!state.conversations.length) {
         createConversation();
@@ -333,6 +374,7 @@ function renameConversation(id) {
     conversation.updatedAt = Date.now();
 
     saveState();
+    saveConversation(conversation);
     renderConversations();
 }
 
@@ -447,6 +489,9 @@ async function ensureSession() {
     conversationSession = await window.client.Conversation.startSession({
         agentId: AGENT_ID,
         textOnly: settings.textOnly,
+        dynamicVariables: {
+            user_id: window.currentUser ? window.currentUser.id : ''
+        },
         onConnect: () => {
             setStatus('Conectado');
         },
@@ -529,9 +574,14 @@ function syncSettingsUI() {
     }
 }
 
-function bootstrap() {
+async function bootstrap() {
     loadSettings();
-    loadState();
+
+    const { data: { session } } = await _supabase.auth.getSession();
+    if (!session) return;
+    window.currentUser = session.user;
+
+    await loadState();
 
     if (!state.conversations.length) {
         createConversation();

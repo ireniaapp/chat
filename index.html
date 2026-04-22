@@ -67,7 +67,11 @@
         @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 30px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
     </style>
 </head>
-<body class="h-dvh overflow-hidden flex">
+<body class="h-dvh overflow-hidden flex relative">
+    <div id="app-loader" class="absolute inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center transition-opacity duration-300">
+        <i class="fas fa-circle-notch fa-spin text-4xl text-blue-500 mb-4"></i>
+        <p class="text-slate-400 text-sm animate-pulse">Verificando sesión...</p>
+    </div>
     <aside id="sidebar" class="sidebar-panel w-72 max-w-[85vw] absolute md:relative inset-y-0 left-0 z-40 transform -translate-x-full md:translate-x-0 transition-transform duration-200 ease-out flex flex-col">
         <div class="p-4 md:pt-16 border-b border-white/10 space-y-3">
             <div class="flex items-center justify-between mb-3">

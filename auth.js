@@ -18,13 +18,11 @@ async function initApp() {
         const user = session.user;
         console.log("Usuario autenticado:", user.email);
 
-        // --- INTEGRACIÓN CON ELEVENLABS ---
-        // Buscamos el elemento de ElevenLabs (suponiendo que usas su widget)
-        const chatAgent = document.querySelector('elevenlabs-convai');
-        if (chatAgent) {
-            // Le pasamos el ID de usuario de Supabase para que ElevenLabs sepa quién es
-            chatAgent.setAttribute('user-id', user.id);
-            console.log("Chatbot vinculado al ID:", user.id);
+        window.currentUser = user;
+
+        const loader = document.getElementById('app-loader');
+        if (loader) {
+            loader.classList.add('hidden');
         }
     }
 }
@@ -39,9 +37,17 @@ if (regForm) {
         const password = document.getElementById('password').value;
         
         const { error } = await _supabase.auth.signUp({ email, password });
+        const errorDiv = document.getElementById('auth-error');
         
-        if (error) alert("Error: " + error.message);
-        else alert("¡Registro iniciado! Revisa tu email.");
+        if (error) {
+            errorDiv.innerText = "Error: " + error.message;
+            errorDiv.classList.remove('hidden');
+        } else {
+            errorDiv.classList.remove('text-red-400', 'bg-red-500/10', 'border-red-500/30');
+            errorDiv.classList.add('text-green-400', 'bg-green-500/10', 'border-green-500/30');
+            errorDiv.innerText = "¡Registro exitoso! Revisa tu email para confirmar.";
+            errorDiv.classList.remove('hidden');
+        }
     });
 }
 
@@ -54,9 +60,14 @@ if (logForm) {
         const password = document.getElementById('login-password').value;
         
         const { error } = await _supabase.auth.signInWithPassword({ email, password });
+        const errorDiv = document.getElementById('auth-error');
         
-        if (error) alert("Error: " + error.message);
-        else window.location.replace("index.html");
+        if (error) {
+            errorDiv.innerText = "Error: " + error.message;
+            errorDiv.classList.remove('hidden');
+        } else {
+            window.location.replace("index.html");
+        }
     });
 }
 
