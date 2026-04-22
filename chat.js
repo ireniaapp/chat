@@ -48,6 +48,15 @@ let voiceToggleInFlight = false;
 let voiceInteractionLocked = false;
 let wasSpeaking = false;
 
+function isMicrophonePermissionError(error) {
+    const message = `${error?.name || ''} ${error?.message || ''}`.toLowerCase();
+    return message.includes('notallowed')
+        || message.includes('permission')
+        || message.includes('denied')
+        || message.includes('microphone')
+        || message.includes('mic');
+}
+
 function uid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
         const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -467,7 +476,8 @@ function onStatusChange(status) {
     setOrbListening(false);
 }
 
-async function ensureSession() {
+async function ensureSession(options = {}) {
+    const { forceTextOnly = false } = options;
     const active = getActiveConversation();
     if (!active) {
         createConversation();
@@ -488,7 +498,7 @@ async function ensureSession() {
 
     conversationSession = await window.client.Conversation.startSession({
         agentId: AGENT_ID,
-        textOnly: settings.textOnly,
+        textOnly: settings.textOnly || forceTextOnly,
         dynamicVariables: {
             user_id: window.currentUser ? window.currentUser.id : ''
         },
@@ -708,6 +718,22 @@ chatForm.addEventListener('submit', async (event) => {
         if (!session) return;
         session.sendUserMessage(text);
     } catch (error) {
+        if (!settings.textOnly && isMicrophonePermissionError(error)) {
+            settings.textOnly = true;
+            saveSettings();
+            syncSettingsUI();
+
+            try {
+                const session = await ensureSession({ forceTextOnly: true });
+                if (!session) return;
+                session.sendUserMessage(text);
+                setStatus('Modo texto activo');
+                return;
+            } catch (fallbackError) {
+                console.error(fallbackError);
+            }
+        }
+
         console.error(error);
         appendMessage('assistant', 'No pude conectar con el agente. Revisa red o permisos de microfono.', true);
         setStatus('Error de conexion');
@@ -740,7 +766,14 @@ voiceBtn.addEventListener('click', async () => {
     } catch (error) {
         console.error(error);
         setVoiceInteractionLocked(false);
-        setStatus('Permiso de microfono requerido');
+        if (isMicrophonePermissionError(error)) {
+            settings.textOnly = true;
+            saveSettings();
+            syncSettingsUI();
+            setStatus('Microfono bloqueado; modo texto activado');
+        } else {
+            setStatus('Permiso de microfono requerido');
+        }
         setOrbListening(false);
     } finally {
         voiceToggleInFlight = false;
