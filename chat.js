@@ -27,6 +27,12 @@ const tokenStatus = document.getElementById('token-status');
 const subscriptionStatus = document.getElementById('subscription-status');
 const subscribeMonthlyBtn = document.getElementById('subscribe-monthly-btn');
 const subscribeYearlyBtn = document.getElementById('subscribe-yearly-btn');
+const planModal = document.getElementById('plan-modal');
+const planModalBackdrop = document.getElementById('plan-modal-backdrop');
+const planModalCloseBtn = document.getElementById('plan-modal-close');
+const planModalMonthlyBtn = document.getElementById('plan-modal-monthly-btn');
+const planModalYearlyBtn = document.getElementById('plan-modal-yearly-btn');
+const planModalFreeBtn = document.getElementById('plan-modal-free-btn');
 
 const AGENT_ID = 'agent_7201kpv8tk7nfm1b2p57jwd1ak18';
 const CHAT_STORAGE_KEY = 'irenia_chat_memory_v1';
@@ -187,6 +193,22 @@ function buildConsultasAgotadasMessage() {
         `Plan anual: ${yearlyUrl}`,
         'Tambien puedes esperar al dia siguiente: las 5 consultas se recargan automaticamente cada dia.'
     ].join('\n');
+}
+
+function isNoCreditsError(errorLike) {
+    const message = getErrorMessage(errorLike).toLowerCase();
+    return message.includes('no tienes consultas disponibles')
+        || message.includes('insufficient credits');
+}
+
+function closePlanModal() {
+    if (!planModal) return;
+    planModal.classList.add('hidden');
+}
+
+function openPlanModal() {
+    if (!planModal) return;
+    planModal.classList.remove('hidden');
 }
 
 function setSubscriptionStatus(text) {
@@ -818,6 +840,7 @@ async function ensureSession(options = {}) {
 
     if (!hasEnoughTokens()) {
         setStatus('Sin consultas disponibles');
+        openPlanModal();
         throw new Error('No tienes consultas disponibles hoy. Vuelve manana o activa un plan.');
     }
 
@@ -1095,14 +1118,14 @@ chatForm.addEventListener('submit', async (event) => {
 
     if (!hasEnoughTokens()) {
         setStatus('Sin consultas disponibles');
-        appendMessage('assistant', buildConsultasAgotadasMessage(), true);
+        openPlanModal();
         return;
     }
 
     const consumed = await consumeTurnTokens();
     if (!consumed) {
         setStatus('Sin consultas disponibles');
-        appendMessage('assistant', buildConsultasAgotadasMessage(), true);
+        openPlanModal();
         return;
     }
 
@@ -1118,6 +1141,12 @@ chatForm.addEventListener('submit', async (event) => {
         if (!session) return;
         session.sendUserMessage(text);
     } catch (error) {
+        if (isNoCreditsError(error)) {
+            setStatus('Sin consultas disponibles');
+            openPlanModal();
+            return;
+        }
+
         lastConnectionError = getErrorMessage(error);
         if (!settings.textOnly && isMicrophonePermissionError(error)) {
             settings.textOnly = true;
@@ -1155,7 +1184,7 @@ voiceBtn.addEventListener('click', async () => {
 
     if (!hasEnoughTokens()) {
         setStatus('Sin consultas disponibles');
-        appendMessage('assistant', buildConsultasAgotadasMessage(), true);
+        openPlanModal();
         setOrbListening(false);
         return;
     }
@@ -1238,6 +1267,42 @@ endConversationBtn.addEventListener('click', async () => {
 
     setStatus(settings.textOnly ? 'Modo texto activo' : 'Conversacion finalizada');
     setOrbListening(false);
+});
+
+if (planModalCloseBtn) {
+    planModalCloseBtn.addEventListener('click', () => {
+        closePlanModal();
+    });
+}
+
+if (planModalBackdrop) {
+    planModalBackdrop.addEventListener('click', () => {
+        closePlanModal();
+    });
+}
+
+if (planModalFreeBtn) {
+    planModalFreeBtn.addEventListener('click', () => {
+        closePlanModal();
+    });
+}
+
+if (planModalMonthlyBtn) {
+    planModalMonthlyBtn.addEventListener('click', () => {
+        startPaypalCheckout('monthly');
+    });
+}
+
+if (planModalYearlyBtn) {
+    planModalYearlyBtn.addEventListener('click', () => {
+        startPaypalCheckout('yearly');
+    });
+}
+
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+        closePlanModal();
+    }
 });
 
 window.addEventListener('beforeunload', () => {
