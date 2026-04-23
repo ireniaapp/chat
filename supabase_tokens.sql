@@ -125,6 +125,36 @@ create policy "Users can delete their own conversations"
     using (auth.uid() = user_id);
 
 -- ------------------------------------------------------------
+-- PayPal suscripciones
+-- ------------------------------------------------------------
+create table if not exists public.paypal_subscriptions (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid references auth.users(id) on delete cascade,
+    paypal_subscription_id text unique not null,
+    paypal_plan_id text,
+    paypal_payer_id text,
+    plan_interval text not null check (plan_interval in ('monthly', 'yearly')),
+    status text not null default 'pending',
+    current_period_end timestamptz,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists paypal_subscriptions_user_id_updated_at_idx
+    on public.paypal_subscriptions (user_id, updated_at desc);
+
+create index if not exists paypal_subscriptions_status_idx
+    on public.paypal_subscriptions (status);
+
+alter table public.paypal_subscriptions enable row level security;
+
+drop policy if exists "Users can read their own PayPal subscriptions" on public.paypal_subscriptions;
+create policy "Users can read their own PayPal subscriptions"
+    on public.paypal_subscriptions
+    for select
+    using (auth.uid() = user_id);
+
+-- ------------------------------------------------------------
 -- Nota
 -- ------------------------------------------------------------
 -- No uses una tabla public.users con este proyecto.

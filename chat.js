@@ -24,6 +24,9 @@ const settingsClose = document.getElementById('settings-close');
 const settingTextOnly = document.getElementById('setting-text-only');
 const settingAutoListen = document.getElementById('setting-auto-listen');
 const tokenStatus = document.getElementById('token-status');
+const subscriptionStatus = document.getElementById('subscription-status');
+const subscribeMonthlyBtn = document.getElementById('subscribe-monthly-btn');
+const subscribeYearlyBtn = document.getElementById('subscribe-yearly-btn');
 
 const AGENT_ID = 'agent_7201kpv8tk7nfm1b2p57jwd1ak18';
 const CHAT_STORAGE_KEY = 'irenia_chat_memory_v1';
@@ -57,6 +60,7 @@ let currentMode = 'idle';
 let hasUserSpokenInVoiceSession = false;
 let awaitingUserUtterance = false;
 let tokenBalance = null;
+let subscriptionLoading = false;
 
 function isMicrophonePermissionError(error) {
     const message = `${error?.name || ''} ${error?.message || ''}`.toLowerCase();
@@ -154,6 +158,96 @@ function updateUserHeader() {
 
 function setTokenBalance(balance) {
     tokenBalance = Number.isFinite(balance) ? balance : null;
+}
+
+function setSubscriptionStatus(text) {
+    if (!subscriptionStatus) return;
+    subscriptionStatus.innerText = text;
+}
+
+function setSubscriptionButtonsDisabled(disabled) {
+    const controls = [subscribeMonthlyBtn, subscribeYearlyBtn];
+    controls.forEach((btn) => {
+        if (!btn) return;
+        btn.disabled = Boolean(disabled);
+        btn.classList.toggle('opacity-50', Boolean(disabled));
+        btn.classList.toggle('cursor-not-allowed', Boolean(disabled));
+    });
+}
+
+function formatPlanLabel(planInterval) {
+    if (planInterval === 'monthly') return 'Plan mensual';
+    if (planInterval === 'yearly') return 'Plan anual';
+    return 'Plan activo';
+}
+
+async function refreshSubscriptionStatus() {
+    if (!window.currentUser || typeof _supabase === 'undefined') return;
+
+    const { data, error } = await _supabase
+        .from('paypal_subscriptions')
+        .select('plan_interval,status,current_period_end')
+        .eq('user_id', window.currentUser.id)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    if (error) {
+        console.error('No se pudo leer suscripcion:', error);
+        setSubscriptionStatus('No se pudo leer tu suscripcion');
+        return;
+    }
+
+    if (!data) {
+        setSubscriptionStatus('Plan free activo');
+        return;
+    }
+
+    const label = formatPlanLabel(data.plan_interval);
+    const status = (data.status || '').toLowerCase();
+    if (status === 'active') {
+        const periodEnd = data.current_period_end
+            ? new Date(data.current_period_end).toLocaleDateString('es-ES')
+            : '';
+        setSubscriptionStatus(periodEnd ? `${label} activo hasta ${periodEnd}` : `${label} activo`);
+        return;
+    }
+
+    setSubscriptionStatus(`${label} (${status || 'estado desconocido'})`);
+}
+
+async function startPaypalCheckout(planInterval) {
+    if (!window.currentUser || typeof _supabase === 'undefined') return;
+    if (subscriptionLoading) return;
+
+    subscriptionLoading = true;
+    setSubscriptionButtonsDisabled(true);
+    setSubscriptionStatus('Creando checkout de PayPal...');
+
+    try {
+        const { data, error } = await _supabase.functions.invoke('create-paypal-subscription', {
+            body: {
+                planInterval
+            }
+        });
+
+        if (error) {
+            throw error;
+        }
+
+        const approvalUrl = data && typeof data === 'object' ? data.approvalUrl : '';
+        if (!approvalUrl || typeof approvalUrl !== 'string') {
+            throw new Error('No recibi URL de aprobacion de PayPal.');
+        }
+
+        window.location.href = approvalUrl;
+    } catch (error) {
+        console.error('Error iniciando checkout PayPal:', error);
+        setSubscriptionStatus('No se pudo iniciar PayPal. Intenta otra vez.');
+    } finally {
+        subscriptionLoading = false;
+        setSubscriptionButtonsDisabled(false);
+    }
 }
 
 function hasEnoughTokens() {
@@ -828,6 +922,7 @@ async function bootstrap() {
     updateUserHeader();
 
     await refreshTokenBalance();
+    await refreshSubscriptionStatus();
 
     await loadState();
 
@@ -841,6 +936,18 @@ async function bootstrap() {
     syncSettingsUI();
     renderConversations();
     renderMessages();
+}
+
+if (subscribeMonthlyBtn) {
+    subscribeMonthlyBtn.addEventListener('click', () => {
+        startPaypalCheckout('monthly');
+    });
+}
+
+if (subscribeYearlyBtn) {
+    subscribeYearlyBtn.addEventListener('click', () => {
+        startPaypalCheckout('yearly');
+    });
 }
 
 conversationList.addEventListener('click', async (event) => {
