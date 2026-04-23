@@ -6,11 +6,12 @@
 -- ------------------------------------------------------------
 create table if not exists public.user_credits (
     user_id uuid primary key references auth.users(id) on delete cascade,
-    balance integer not null default 2,
+    balance integer not null default 5,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
 
+alter table public.user_credits alter column balance set default 5;
 alter table public.user_credits enable row level security;
 
 drop policy if exists "Users can read their own credits" on public.user_credits;
@@ -40,7 +41,7 @@ set search_path = public
 as $$
 begin
     insert into public.user_credits (user_id, balance)
-    values (new.id, 2)
+    values (new.id, 5)
     on conflict (user_id) do nothing;
     return new;
 end;
@@ -63,6 +64,13 @@ begin
     if p_amount is null or p_amount <= 0 then
         raise exception 'Invalid amount';
     end if;
+
+    -- Recarga diaria automatica: 5 consultas al iniciar un nuevo dia.
+    update public.user_credits
+    set balance = 5,
+        updated_at = now()
+    where user_id = auth.uid()
+      and updated_at::date < now()::date;
 
     update public.user_credits
     set balance = balance - p_amount,

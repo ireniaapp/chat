@@ -32,7 +32,7 @@ const AGENT_ID = 'agent_7201kpv8tk7nfm1b2p57jwd1ak18';
 const CHAT_STORAGE_KEY = 'irenia_chat_memory_v1';
 const SETTINGS_STORAGE_KEY = 'irenia_chat_settings_v1';
 const TOKEN_COST_PER_TURN = 1;
-const LOW_TOKEN_WARNING_THRESHOLD = 5;
+const LOW_TOKEN_WARNING_THRESHOLD = 2;
 
 const defaultSettings = {
     textOnly: false,
@@ -160,6 +160,35 @@ function setTokenBalance(balance) {
     tokenBalance = Number.isFinite(balance) ? balance : null;
 }
 
+function escapeHtml(text) {
+    return text
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function linkifyText(text) {
+    const escaped = escapeHtml(text);
+    return escaped
+        .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="underline text-blue-300 hover:text-blue-200">$1</a>')
+        .replace(/\n/g, '<br>');
+}
+
+function buildConsultasAgotadasMessage() {
+    const origin = window.location.origin;
+    const monthlyUrl = `${origin}/plans.html?plan=monthly`;
+    const yearlyUrl = `${origin}/plans.html?plan=yearly`;
+    return [
+        'Ya usaste tus 5 consultas diarias.',
+        'Puedes suscribirte aqui:',
+        `Plan mensual: ${monthlyUrl}`,
+        `Plan anual: ${yearlyUrl}`,
+        'Tambien puedes esperar al dia siguiente: las 5 consultas se recargan automaticamente cada dia.'
+    ].join('\n');
+}
+
 function setSubscriptionStatus(text) {
     if (!subscriptionStatus) return;
     subscriptionStatus.innerText = text;
@@ -268,18 +297,18 @@ function updateTokenStatus() {
 
     if (tokenBalance <= 0) {
         tokenStatus.classList.add('text-red-300', 'border-red-500/30', 'bg-red-500/10');
-        tokenStatus.innerText = 'Sin tokens disponibles';
+        tokenStatus.innerText = 'Sin consultas disponibles';
         return;
     }
 
     if (tokenBalance <= LOW_TOKEN_WARNING_THRESHOLD) {
         tokenStatus.classList.add('text-amber-300', 'border-amber-400/30', 'bg-amber-500/10');
-        tokenStatus.innerText = `Atencion: te quedan ${tokenBalance} tokens`;
+        tokenStatus.innerText = `Te quedan ${tokenBalance} consultas hoy`;
         return;
     }
 
     tokenStatus.classList.add('text-slate-300', 'border-slate-700', 'bg-slate-900/70');
-    tokenStatus.innerText = `Tokens: ${tokenBalance}`;
+    tokenStatus.innerText = `Consultas disponibles hoy: ${tokenBalance}`;
 }
 
 async function refreshTokenBalance() {
@@ -311,7 +340,7 @@ async function consumeTurnTokens() {
     });
 
     if (error) {
-        console.error('No se pudo descontar tokens:', error);
+        console.error('No se pudo descontar consultas:', error);
         return false;
     }
 
@@ -537,7 +566,11 @@ function renderMessages() {
     active.messages.forEach((message) => {
         const item = document.createElement('div');
         item.className = `p-4 rounded-2xl max-w-[85%] ${message.role === 'user' ? 'bg-blue-600 self-end text-white ml-auto' : 'bg-slate-800 self-start text-slate-200'}`;
-        item.innerText = message.text;
+        if (message.role === 'assistant') {
+            item.innerHTML = linkifyText(message.text);
+        } else {
+            item.innerText = message.text;
+        }
         conversationTrack.appendChild(item);
     });
 
@@ -552,7 +585,11 @@ function appendMessage(role, text, persist = true) {
 
     const item = document.createElement('div');
     item.className = `p-4 rounded-2xl max-w-[85%] ${role === 'user' ? 'bg-blue-600 self-end text-white ml-auto' : 'bg-slate-800 self-start text-slate-200'}`;
-    item.innerText = safeText;
+    if (role === 'assistant') {
+        item.innerHTML = linkifyText(safeText);
+    } else {
+        item.innerText = safeText;
+    }
     conversationTrack.appendChild(item);
     setTimeout(() => {
         history.scrollTop = history.scrollHeight;
@@ -780,8 +817,8 @@ async function ensureSession(options = {}) {
     }
 
     if (!hasEnoughTokens()) {
-        setStatus('Sin tokens disponibles');
-        throw new Error('No tienes tokens disponibles. Recarga tu saldo en Supabase.');
+        setStatus('Sin consultas disponibles');
+        throw new Error('No tienes consultas disponibles hoy. Vuelve manana o activa un plan.');
     }
 
     const currentActive = getActiveConversation();
@@ -1057,15 +1094,15 @@ chatForm.addEventListener('submit', async (event) => {
     if (!text) return;
 
     if (!hasEnoughTokens()) {
-        setStatus('Sin tokens disponibles');
-        appendMessage('assistant', 'No tienes tokens disponibles para seguir usando el chat.', true);
+        setStatus('Sin consultas disponibles');
+        appendMessage('assistant', buildConsultasAgotadasMessage(), true);
         return;
     }
 
     const consumed = await consumeTurnTokens();
     if (!consumed) {
-        setStatus('Sin tokens disponibles');
-        appendMessage('assistant', 'No pude descontar tus tokens. Revisa tu saldo en Supabase.', true);
+        setStatus('Sin consultas disponibles');
+        appendMessage('assistant', buildConsultasAgotadasMessage(), true);
         return;
     }
 
@@ -1117,7 +1154,8 @@ voiceBtn.addEventListener('click', async () => {
     if (settings.textOnly || voiceToggleInFlight) return;
 
     if (!hasEnoughTokens()) {
-        setStatus('Sin tokens disponibles');
+        setStatus('Sin consultas disponibles');
+        appendMessage('assistant', buildConsultasAgotadasMessage(), true);
         setOrbListening(false);
         return;
     }

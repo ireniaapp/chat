@@ -2,7 +2,7 @@
 const SUPABASE_URL = 'https://ttymwhkhwwgljuguxeia.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0eW13aGtod3dnbGp1Z3V4ZWlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5NzcxMjIsImV4cCI6MjA4NzU1MzEyMn0.iLxKac2QqiVo7sGrI84bp0yAxplfPAU_qev6A7knW6k'; 
 const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-const DEFAULT_TOKEN_GRANT = 2;
+const DEFAULT_DAILY_QUERIES = 5;
 const PLAN_ONBOARDING_KEY = 'irenia_plan_onboarding_seen_v1';
 
 function getCurrentPage() {
@@ -83,7 +83,7 @@ async function startPaypalCheckout(planInterval) {
 async function ensureUserCredits(options = {}) {
     const {
         initialize = false,
-        startingBalance = DEFAULT_TOKEN_GRANT
+        startingBalance = DEFAULT_DAILY_QUERIES
     } = options;
 
     const { data: { user } } = await _supabase.auth.getUser();
@@ -91,17 +91,40 @@ async function ensureUserCredits(options = {}) {
 
     const { data, error } = await _supabase
         .from('user_credits')
-        .select('balance')
+        .select('balance,updated_at')
         .eq('user_id', user.id)
         .maybeSingle();
 
     if (error) {
-        console.error('No se pudo leer el saldo de tokens:', error);
+        console.error('No se pudo leer el saldo de consultas:', error);
         return null;
     }
 
     if (data?.balance !== null && data?.balance !== undefined) {
-        return data.balance;
+        const lastUpdate = data.updated_at ? new Date(data.updated_at) : null;
+        const today = new Date();
+        const shouldReset = !lastUpdate || lastUpdate.toDateString() !== today.toDateString();
+
+        if (!shouldReset) {
+            return data.balance;
+        }
+
+        const { data: resetData, error: resetError } = await _supabase
+            .from('user_credits')
+            .update({
+                balance: DEFAULT_DAILY_QUERIES,
+                updated_at: new Date().toISOString()
+            })
+            .eq('user_id', user.id)
+            .select('balance')
+            .maybeSingle();
+
+        if (resetError) {
+            console.error('No se pudo recargar consultas diarias:', resetError);
+            return data.balance;
+        }
+
+        return resetData?.balance ?? DEFAULT_DAILY_QUERIES;
     }
 
     if (!initialize) {
@@ -119,7 +142,7 @@ async function ensureUserCredits(options = {}) {
         .maybeSingle();
 
     if (upsertError) {
-        console.error('No se pudo inicializar el saldo de tokens:', upsertError);
+        console.error('No se pudo inicializar las consultas diarias:', upsertError);
         return null;
     }
 
@@ -353,6 +376,7 @@ const chooseMonthlyBtn = document.getElementById('choose-monthly-btn');
 const chooseYearlyBtn = document.getElementById('choose-yearly-btn');
 const chooseFreeBtn = document.getElementById('choose-free-btn');
 const planStatus = document.getElementById('plan-status');
+let planCheckoutInFlight = false;
 
 function setPlanStatus(text, type = 'neutral') {
     if (!planStatus) return;
@@ -370,25 +394,31 @@ function setPlanStatus(text, type = 'neutral') {
     planStatus.innerText = text;
 }
 
+async function openPlanCheckout(planInterval) {
+    if (planCheckoutInFlight) return;
+    planCheckoutInFlight = true;
+
+    try {
+        const label = planInterval === 'yearly' ? 'anual' : 'mensual';
+        setPlanStatus(`Creando checkout ${label} en PayPal...`, 'neutral');
+        await startPaypalCheckout(planInterval);
+    } catch (error) {
+        const label = planInterval === 'yearly' ? 'anual' : 'mensual';
+        setPlanStatus(`No se pudo iniciar el plan ${label}: ${translateAuthErrorMessage(error?.message || 'error')}`, 'error');
+    } finally {
+        planCheckoutInFlight = false;
+    }
+}
+
 if (chooseMonthlyBtn) {
     chooseMonthlyBtn.addEventListener('click', async () => {
-        try {
-            setPlanStatus('Creando checkout mensual en PayPal...', 'neutral');
-            await startPaypalCheckout('monthly');
-        } catch (error) {
-            setPlanStatus(`No se pudo iniciar el plan mensual: ${translateAuthErrorMessage(error?.message || 'error')}`, 'error');
-        }
+        await openPlanCheckout('monthly');
     });
 }
 
 if (chooseYearlyBtn) {
     chooseYearlyBtn.addEventListener('click', async () => {
-        try {
-            setPlanStatus('Creando checkout anual en PayPal...', 'neutral');
-            await startPaypalCheckout('yearly');
-        } catch (error) {
-            setPlanStatus(`No se pudo iniciar el plan anual: ${translateAuthErrorMessage(error?.message || 'error')}`, 'error');
-        }
+        await openPlanCheckout('yearly');
     });
 }
 
@@ -400,6 +430,14 @@ if (chooseFreeBtn) {
         }
         window.location.replace('index.html');
     });
+}
+
+if (chooseMonthlyBtn || chooseYearlyBtn) {
+    const params = new URLSearchParams(window.location.search);
+    const requestedPlan = params.get('plan');
+    if (requestedPlan === 'monthly' || requestedPlan === 'yearly') {
+        openPlanCheckout(requestedPlan);
+    }
 }
 
 // --- 5. LOGOUT ---
