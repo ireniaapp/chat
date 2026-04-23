@@ -6,6 +6,7 @@ const textInput = document.getElementById('text-input');
 const voiceBtn = document.getElementById('voice-trigger');
 const endConversationBtn = document.getElementById('end-conversation-btn');
 const statusText = document.getElementById('status-text');
+const userName = document.getElementById('user-name');
 
 const conversationList = document.getElementById('conversation-list');
 const newChatBtn = document.getElementById('new-chat-btn');
@@ -116,6 +117,39 @@ function formatDateLabel(timestamp) {
 
 function setStatus(text) {
     statusText.innerText = text;
+}
+
+function resolveUserDisplayName(user) {
+    if (!user || typeof user !== 'object') return '';
+
+    const metadata = user.user_metadata && typeof user.user_metadata === 'object'
+        ? user.user_metadata
+        : {};
+
+    const rawName = metadata.full_name || metadata.name || metadata.display_name || metadata.username;
+    if (typeof rawName === 'string' && rawName.trim()) {
+        return rawName.trim();
+    }
+
+    if (typeof user.email === 'string' && user.email.trim()) {
+        return user.email.split('@')[0];
+    }
+
+    return 'Usuario';
+}
+
+function updateUserHeader() {
+    if (!userName) return;
+
+    const displayName = resolveUserDisplayName(window.currentUser);
+    if (!displayName) {
+        userName.classList.add('hidden');
+        userName.innerText = '';
+        return;
+    }
+
+    userName.innerText = `Usuario: ${displayName}`;
+    userName.classList.remove('hidden');
 }
 
 function setTokenBalance(balance) {
@@ -791,6 +825,7 @@ async function bootstrap() {
     const { data: { session } } = await _supabase.auth.getSession();
     if (!session) return;
     window.currentUser = session.user;
+    updateUserHeader();
 
     await refreshTokenBalance();
 

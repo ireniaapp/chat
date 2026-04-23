@@ -1,4 +1,9 @@
--- Tabla de saldos por usuario
+-- Esquema limpio para la app de Irenia.
+-- Ejecuta solo este archivo en Supabase.
+
+-- ------------------------------------------------------------
+-- Saldo por usuario
+-- ------------------------------------------------------------
 create table if not exists public.user_credits (
     user_id uuid primary key references auth.users(id) on delete cascade,
     balance integer not null default 2,
@@ -8,14 +13,12 @@ create table if not exists public.user_credits (
 
 alter table public.user_credits enable row level security;
 
--- Cada usuario solo puede ver su propio saldo
 drop policy if exists "Users can read their own credits" on public.user_credits;
 create policy "Users can read their own credits"
     on public.user_credits
     for select
     using (auth.uid() = user_id);
 
--- Cada usuario solo puede crear o actualizar su propio saldo
 drop policy if exists "Users can insert their own credits" on public.user_credits;
 create policy "Users can insert their own credits"
     on public.user_credits
@@ -29,7 +32,6 @@ create policy "Users can update their own credits"
     using (auth.uid() = user_id)
     with check (auth.uid() = user_id);
 
--- Crear saldo inicial al registrarse
 create or replace function public.handle_new_user_credits()
 returns trigger
 language plpgsql
@@ -49,7 +51,6 @@ create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_user_credits();
 
--- Descuento atomico de tokens por turno
 create or replace function public.consume_credits(p_amount integer)
 returns boolean
 language plpgsql
@@ -81,7 +82,9 @@ $$;
 revoke all on function public.consume_credits(integer) from public;
 grant execute on function public.consume_credits(integer) to authenticated;
 
--- Tabla para guardar conversaciones del chat
+-- ------------------------------------------------------------
+-- Conversaciones
+-- ------------------------------------------------------------
 create table if not exists public.conversations (
     id uuid primary key,
     user_id uuid not null references auth.users(id) on delete cascade,
@@ -120,3 +123,9 @@ create policy "Users can delete their own conversations"
     on public.conversations
     for delete
     using (auth.uid() = user_id);
+
+-- ------------------------------------------------------------
+-- Nota
+-- ------------------------------------------------------------
+-- No uses una tabla public.users con este proyecto.
+-- Si más adelante quieres guardar perfil, crea public.profiles separado de auth.users.
